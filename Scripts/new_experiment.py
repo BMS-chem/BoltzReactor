@@ -66,8 +66,8 @@ for folder in ["inputs", "jobs", "outputs", "logs"]:
 # Just the header row. A file that already exists is left untouched, so this
 # cannot wipe out input you have already typed in.
 templates = {
-    "proteins.csv": "ID,SEQUENCE,COFACTORS\n",
-    "ligands.csv": "ID,SMILES\n",
+    "proteins.csv": "ID,SEQUENCE,COFACTORS,COVALENT_SITE\n",
+    "ligands.csv": "ID,SMILES,WARHEAD\n",
 }
 
 for file_name, header in templates.items():
@@ -86,10 +86,12 @@ for file_name, header in templates.items():
 print(f"\nExperiment folder ready: {experiment_dir}")
 print("\nNext:")
 print(f"  1. Fill in {inputs_dir / 'proteins.csv'}")
-print("     ID,SEQUENCE,COFACTORS  - one row per protein.")
+print("     ID,SEQUENCE,COFACTORS,COVALENT_SITE  - one row per protein.")
+print("     COVALENT_SITE may be left empty if this is not a covalent experiment.")
 print("     SEQUENCE separates chains with ':'. COFACTORS holds CCD codes")
 print("     separated by ';' (e.g. ZN;MG) and may be left empty.")
 print(f"  2. Fill in {inputs_dir / 'ligands.csv'}")
-print("     ID,SMILES  - one row per ligand.")
+print("     ID,SMILES,WARHEAD  - one row per ligand.")
+print("     WARHEAD may be left empty if the ligand is not covalent.")
 print("     IDs must be unique and must not contain spaces, slashes or '__'.")
 print(f"  3. On the cluster, submit it:  ./Scripts/submit_boltz.sh {name}")

@@ -1,0 +1,4 @@
+# The working tree lives on a share that is read directly from NEMO (Linux),
+# so shell scripts must have LF endings even when checked out on Windows.
+# Without this, core.autocrlf=true writes CRLF and the shebang becomes "bash\r".
+*.sh text eol=lf

@@ -1,4 +1,4 @@
-# Boltz batch pipeline
+# Boltz batch pipeline for covalent compounds
 
 _Takes a list of proteins and a list of ligands, makes one [Boltz-2](https://github.com/jwohlwend/boltz)
 job for every protein x ligand pair, runs them on a Slurm cluster, and collects the results into one table. The pipeline was run on a literature dataset in order to calculate enrichment and verify that it can reproduce the published results._
