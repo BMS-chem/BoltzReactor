@@ -8,7 +8,7 @@
 # Usage:
 #   ./Scripts/submit_boltz.sh <experiment>
 #   ./Scripts/submit_boltz.sh <experiment> --no_affinity
-#   ./Scripts/submit_boltz.sh <experiment> --override --time 1-00:00:00
+#   ./Scripts/submit_boltz.sh <experiment> --override --time 7-00:00:00
 #
 # Options:
 #   --no_affinity   skip the affinity prediction (structure only)
@@ -23,7 +23,10 @@ set -u            # stop if an undefined variable is used
 # 1. Settings for SBATCH setup
 # ---------------------------------------------------------------------------
 # These are site-specific: set them for your own cluster.
-TIME_LIMIT="7-00:00:00"       # days-hours:minutes:seconds
+# One day suits most experiments. Slurm can only start a job in a gap at least as
+# long as the limit asked for, so a week-long default leaves small runs queueing
+# behind everything. Pass --time for a big run: a 506-pair run needs several days.
+TIME_LIMIT="1-00:00:00"       # days-hours:minutes:seconds
 PARTITION="ga100"             # a GPU partition
 CPUS=32
 MEMORY="100G"
