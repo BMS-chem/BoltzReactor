@@ -142,12 +142,13 @@ The pipeline was checked this way against a published virtual screen, giving a
 ROC AUC of 0.848 where the paper reports 0.838 for the same compounds and model:
 see [docs/sigma2-benchmark.md](docs/sigma2-benchmark.md).
 
-## Still figuring out:
+## Still figuring out/to-dos:
 
 - **Affinity on covalent complexes.** Jack told me that Boltz can predict covalent
 binding affinity after all (not just pose prediction) - analogous to Ki; it doesn't
 factor in Kinact - is this just "affinity_pred_value" on a covalent job, or am I missing
 something?
+- **Streamline analysis of the outputs** - write a script that automatically compares RMSD between prediction aligned with a specified crystal structure provided in the reference folder (and maybe also generates aligned .pdb file for examination)
 
 ## Licence
 
