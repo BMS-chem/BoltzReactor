@@ -53,11 +53,7 @@ WARHEADS = {
         "atom": "SG",
     },
     "CF2_acrylamide": {
-        # Michael addition. The thiol adds to the carbon beta to the carbonyl, which here
-        # is the alkene carbon next to the CHF2 group, so that carbon is the one mapped :1.
-        # Do not map :1 onto the CHF2 carbon: it already has four bonds (2 F, 1 C, 1 H), so
-        # opening a valence there makes it pentavalent and the radical is then silently
-        # dropped when the bound SMILES is written out.
+        # Michael addition
         "smarts": "[F][CH:3]([F])[CH:1]=[CH:2][CX3:4](=[O:5])[NX3:6]>>[F][CH:3]([F])[CH:1][CH2:2][CX3:4](=[O:5])[NX3:6]",
         "residue": "C",
         "atom": "SG",
@@ -252,17 +248,8 @@ for _, ligand in ligands.iterrows():
     # Count the warhead groups by matching the reaction's reactant pattern against the
     # ligand, NOT by counting what RunReactants returned. RunReactants gives one product
     # set per way the pattern can be laid over the molecule, so a pattern containing two
-    # interchangeable atoms returns two product sets for a single group. CF2_acrylamide
-    # is one of these: its two fluorines can swap, so every CF2 warhead counted as two.
+    # interchangeable atoms returns two product sets for a single group. 
     # GetSubstructMatches(uniquify=True) collapses those re-orderings and counts groups.
-    #
-    # Measured (RDKit 2026.09) - product sets vs. matches:
-    #   one CF2 warhead        2 product sets, 1 match
-    #   one acrylamide         1 product set,  1 match
-    #   one chloroacetamide    1 product set,  1 match
-    #   two CF2 warheads       4 product sets, 2 matches
-    # Do not try to count by comparing the products instead: a symmetrical bis-warhead
-    # ligand gives the SAME product whichever group reacts, so that would let it through.
     matches = mol.GetSubstructMatches(reaction.GetReactantTemplate(0), uniquify=True)
 
     # More than one match is an error:

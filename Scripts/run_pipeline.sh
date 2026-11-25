@@ -23,15 +23,12 @@ set -u            # stop if an undefined variable is used
 # 1. Boltz settings (currently Boltz' defaults)
 # ---------------------------------------------------------------------------
 # Poses generated per job. submit_boltz.sh --diffusion_samples overrides it; the
-# default applies when nothing is passed in. Note collect_results.py only reads
+# default applies when nothing is passed in. collect_results.py only reads
 # model_0, so extra samples land in outputs/ but not in results.csv.
 DIFFUSION_SAMPLES="${DIFFUSION_SAMPLES:-1}"
 
-# The NEMO module to load. 2.2.1 is the first build that keeps a SMILES ligand's
-# stereochemistry: on 2.2.0 no chirality constraints were built at all, so
-# --use_potentials had nothing to act on. Before changing this, check the new build
-# as docs/boltz-notes.md describes (parse a ligand through parse_boltz_schema and
-# count target.residue_constraints.chiral_atom_constraints).
+# The NEMO module to load. 2.2.1 is the first build that encourages preservation of
+# a SMILES ligand's stereochemistry (add --use_potentials)
 BOLTZ_MODULE="boltz/2.2.1"
 
 RECYCLING_STEPS=3
@@ -124,15 +121,8 @@ python "$PROJECT_DIR/Scripts/cache_msas.py" --experiment "$EXPERIMENT"
 # ---------------------------------------------------------------------------
 # 5b. Tidy up the MSA working folders
 # ---------------------------------------------------------------------------
-# Everything worth keeping is now in cache_msa/, so the fetch intermediates go:
-# the raw ColabFold downloads, the throwaway protein-only structures, and the
-# job YAMLs (which are rewritten from the CSVs on every run anyway).
-#
-# This runs only if step 3 succeeded, because set -e stops the script on failure.
-# That is deliberate: if the caching fails, the downloads stay put to look at.
-#
-# The 'case' guards the rm: $EXPERIMENT_DIR must start with $PROJECT_DIR/experiments/
-# and must not end there. rm -rf on an empty or wrong variable would be expensive.
+# Everything worth keeping is now in cache_msa/, so the fetch intermediates
+# are cleaned up
 case "$EXPERIMENT_DIR" in
     "$PROJECT_DIR/experiments/"?*)
         rm -rf "$EXPERIMENT_DIR/msa_outputs" "$EXPERIMENT_DIR/msa_jobs"
@@ -173,33 +163,16 @@ python "$PROJECT_DIR/Scripts/make_jobs.py" --experiment "$EXPERIMENT" $AFFINITY_
 #
 # --use_potentials (off by default) steers the diffusion with Boltz's physical
 # potentials: clash, pose and connection terms. It costs roughly 2-3x the sampling
-# time, because it samples 3 particles.
-#
-# It is also what holds a ligand's stereochemistry, through ChiralAtomPotential and
-# StereoBondPotential - but only from boltz/2.2.1 onwards. On 2.2.0 those potentials
-# received nothing to restrain, because schema.py called AddHs() before building the
-# constraints and that dropped the _CIPRank property the constraint builder is
-# guarded on, so zero constraints were built for any SMILES ligand. 2.2.1 re-runs
-# AssignStereochemistry and the constraints appear.
-#
-# Measured 2026-11-25, 1 protein x 2 stereoisomers x 5 samples: with the flag on
-# 2.2.1, 10/10 poses kept the submitted configuration; with it off on the same
-# version, one input gave 3 inverted and 2 kept. So pass --use_potentials for any
-# experiment whose ligands have a stereocentre. See CLAUDE.md.
+# time, because it samples 3 particles. I think this seems to be generally
+# required to encourage Boltz to preserve stereochemistry of chiral centres (2.2.1).
+
 echo ""
 echo "--- Step 5: running the predictions ---"
 
 # Boltz turns the YAMLs into processed inputs the first time an experiment runs
-# (outputs/boltz_results_jobs/processed/) and reuses that folder ever after. The
-# constraint arrays live there, and they are built at PROCESSING time, not at
-# prediction time. --override only redoes the predictions, so on its own it
-# resamples whatever constraints the previous Boltz version wrote.
-#
-# Measured 2026-11-25: 003 rerun on 2.2.1 with --override --use_potentials reused
-# constraints processed under 2.2.0 and returned an inverted ligand, while the log
-# header said 2.2.1 and potentials on. Deleting processed/ first took the file from
-# 12 to 13 chiral constraints (the 13th is the ligand's own centre; the other 12 are
-# ATP's) and the configuration came through. So --override deletes it here.
+# (outputs/boltz_results_jobs/processed/) and reuses that folder ever after. 
+# --override deletes the processed folder so that predictions are set up from
+# scratch and re-run.
 PROCESSED_DIR="$EXPERIMENT_DIR/outputs/boltz_results_jobs/processed"
 if [ "$OVERRIDE" = "yes" ] && [ -d "$PROCESSED_DIR" ]; then
     echo "  --override: deleting processed/ so the YAMLs are parsed again"

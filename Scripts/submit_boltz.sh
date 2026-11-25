@@ -32,10 +32,10 @@ set -u            # stop if an undefined variable is used
 # ---------------------------------------------------------------------------
 # 1. Settings for SBATCH setup
 # ---------------------------------------------------------------------------
-# These are site-specific: set them for your own cluster.
-# One day suits most experiments. Slurm can only start a job in a gap at least as
-# long as the limit asked for, so a week-long default leaves small runs queueing
-# behind everything. Pass --time for a big run: a 506-pair run needs several days.
+# These are site-specific. One day suits most experiments. 
+# Slurm can only start a job in a gap at least as long as the limit asked for,
+# so a week-long default leaves small runs queueing behind everything. 
+# Pass --time for a big run.
 TIME_LIMIT="1-00:00:00"       # days-hours:minutes:seconds
 PARTITION="ga100"             # a GPU partition
 CPUS=32
