@@ -92,12 +92,25 @@ if not experiment_dir.exists():
 # encoding="utf-8-sig" removes the invisible marker some text editors put at the start.
 # dtype=str and keep_default_na=False keep every cell as text, with empty cells as "".
 proteins = pd.read_csv(inputs_dir / "proteins.csv", encoding="utf-8-sig", dtype=str, keep_default_na=False)
-ligands = pd.read_csv(inputs_dir / "ligands.csv", encoding="utf-8-sig", dtype=str, keep_default_na=False)
+
+# An apo experiment has no ligands.csv at all, which make_jobs.py accepts. There is
+# then nothing to prepare, so stop here rather than failing to open a file that an
+# apo experiment is not expected to have.
+ligands_file = inputs_dir / "ligands.csv"
+if not ligands_file.exists():
+    print("No ligands.csv: apo experiment, nothing to prepare.")
+    if prepared_file.exists():
+        prepared_file.unlink()
+        print(f"Removed a leftover {prepared_file.name} from an earlier run.")
+    sys.exit(0)
+
+ligands = pd.read_csv(ligands_file, encoding="utf-8-sig", dtype=str, keep_default_na=False)
 
 proteins.columns = proteins.columns.str.strip()
 ligands.columns = ligands.columns.str.strip()
 proteins = proteins.apply(lambda column: column.str.strip())
-ligands = ligands.apply(lambda column: column.str.strip())
+if len(ligands) > 0:
+    ligands = ligands.apply(lambda column: column.str.strip())
 
 
 # ---------------------------------------------------------------------------

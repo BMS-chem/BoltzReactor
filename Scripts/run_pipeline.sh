@@ -22,7 +22,18 @@ set -u            # stop if an undefined variable is used
 # ---------------------------------------------------------------------------
 # 1. Boltz settings (currently Boltz' defaults)
 # ---------------------------------------------------------------------------
-DIFFUSION_SAMPLES=1       # poses generated per job
+# Poses generated per job. submit_boltz.sh --diffusion_samples overrides it; the
+# default applies when nothing is passed in. Note collect_results.py only reads
+# model_0, so extra samples land in outputs/ but not in results.csv.
+DIFFUSION_SAMPLES="${DIFFUSION_SAMPLES:-1}"
+
+# The NEMO module to load. 2.2.1 is the first build that keeps a SMILES ligand's
+# stereochemistry: on 2.2.0 no chirality constraints were built at all, so
+# --use_potentials had nothing to act on. Before changing this, check the new build
+# as docs/boltz-notes.md describes (parse a ligand through parse_boltz_schema and
+# count target.residue_constraints.chiral_atom_constraints).
+BOLTZ_MODULE="boltz/2.2.1"
+
 RECYCLING_STEPS=3
 SAMPLING_STEPS=200
 OUTPUT_FORMAT=mmcif       # mmcif or pdb
@@ -30,7 +41,8 @@ OUTPUT_FORMAT=mmcif       # mmcif or pdb
 # ---------------------------------------------------------------------------
 # 2. Set up
 # ---------------------------------------------------------------------------
-# EXPERIMENT, PROJECT_DIR, NO_AFFINITY and OVERRIDE are passed in by submit_boltz.sh.
+# EXPERIMENT, PROJECT_DIR, NO_AFFINITY, OVERRIDE and POTENTIALS are passed in by
+# submit_boltz.sh.
 EXPERIMENT_DIR="$PROJECT_DIR/experiments/$EXPERIMENT"
 
 # Boltz is always run from the project folder, because the job YAMLs give their
@@ -45,11 +57,14 @@ echo "Experiment:  $EXPERIMENT"
 echo "Project:     $PROJECT_DIR"
 echo "Affinity:    $( [ "$NO_AFFINITY" = "yes" ] && echo OFF || echo ON )"
 echo "Override:    $OVERRIDE"
+echo "Potentials:  $POTENTIALS"
+echo "Samples:     $DIFFUSION_SAMPLES per job"
+echo "Boltz:       $BOLTZ_MODULE"
 echo "Started:     $(date)"
 echo "=========================================="
 
 module purge
-module load boltz/2.2.0
+module load "$BOLTZ_MODULE"
 
 # Turn yes/no settings into the flags the commands actually take.
 AFFINITY_FLAG=""
@@ -57,6 +72,9 @@ if [ "$NO_AFFINITY" = "yes" ]; then AFFINITY_FLAG="--no_affinity"; fi
 
 OVERRIDE_FLAG=""
 if [ "$OVERRIDE" = "yes" ]; then OVERRIDE_FLAG="--override"; fi
+
+POTENTIALS_FLAG=""
+if [ "$POTENTIALS" = "yes" ]; then POTENTIALS_FLAG="--use_potentials"; fi
 
 
 # ---------------------------------------------------------------------------
@@ -152,6 +170,22 @@ python "$PROJECT_DIR/Scripts/make_jobs.py" --experiment "$EXPERIMENT" $AFFINITY_
 # ---------------------------------------------------------------------------
 # Boltz runs every YAML in jobs/ in one go, and skips any pair that already has
 # output, unless --override is given.
+#
+# --use_potentials (off by default) steers the diffusion with Boltz's physical
+# potentials: clash, pose and connection terms. It costs roughly 2-3x the sampling
+# time, because it samples 3 particles.
+#
+# It is also what holds a ligand's stereochemistry, through ChiralAtomPotential and
+# StereoBondPotential - but only from boltz/2.2.1 onwards. On 2.2.0 those potentials
+# received nothing to restrain, because schema.py called AddHs() before building the
+# constraints and that dropped the _CIPRank property the constraint builder is
+# guarded on, so zero constraints were built for any SMILES ligand. 2.2.1 re-runs
+# AssignStereochemistry and the constraints appear.
+#
+# Measured 2026-11-25, 1 protein x 2 stereoisomers x 5 samples: with the flag on
+# 2.2.1, 10/10 poses kept the submitted configuration; with it off on the same
+# version, one input gave 3 inverted and 2 kept. So pass --use_potentials for any
+# experiment whose ligands have a stereocentre. See CLAUDE.md.
 echo ""
 echo "--- Step 5: running the predictions ---"
 boltz predict "$EXPERIMENT_DIR/jobs" \
@@ -161,7 +195,7 @@ boltz predict "$EXPERIMENT_DIR/jobs" \
     --recycling_steps "$RECYCLING_STEPS" \
     --sampling_steps "$SAMPLING_STEPS" \
     --output_format "$OUTPUT_FORMAT" \
-    $OVERRIDE_FLAG
+    $OVERRIDE_FLAG $POTENTIALS_FLAG
 
 
 # ---------------------------------------------------------------------------

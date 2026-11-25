@@ -96,8 +96,10 @@ Then, log in to the cluster, navigate to the project directory, and run:
 ./Scripts/submit_boltz.sh <experiment>
 ```
 
-Options: `--no_affinity` (structure only), `--override` (redo pairs that already
-have output), `--time 1-00:00:00` (Slurm time limit).
+Options: `--no_affinity` (structure only), `--use_potentials` (needed to keep a
+ligand's stereochemistry - see the note below; costs about 2.2x the sampling time),
+`--diffusion_samples N` (poses per job), `--override` (redo pairs that already have
+output), `--time 1-00:00:00` (Slurm time limit).
 
 The Slurm partition, resources and notification address are set at the top of
 `Scripts/submit_boltz.sh` and will need changing for different clusters. Scripts may
@@ -142,7 +144,16 @@ The pipeline was checked this way against a published virtual screen, giving a
 ROC AUC of 0.848 where the paper reports 0.838 for the same compounds and model:
 see [docs/sigma2-benchmark.md](docs/sigma2-benchmark.md).
 
-## Still figuring out/to-dos:
+## Notes:
+
+- **Handling stereochemistry.** needs both `--use_potentials` and Boltz 2.2.1 or later, to apply chirality constraints. Without restraints, stereocentres in the output are biased towards whatever the scaffold prefers (nb. the potentials add a desirable bias rather than a hard guarantee that stereochemistry will be as intended).
+
+- **Handling protonation states.** Not looked at properly yet. One thing to know
+before starting: when a job asks for affinity, Boltz puts the SMILES through the
+ChEMBL `standardize()` before building the molecule, so a protonated input may not
+survive as submitted. Not tested yet.
+
+## To-dos:
 
 - **Affinity on covalent complexes.** Jack told me that Boltz can predict covalent
 binding affinity after all (not just pose prediction) - analogous to Ki; it doesn't

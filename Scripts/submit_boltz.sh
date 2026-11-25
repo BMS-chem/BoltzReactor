@@ -9,11 +9,21 @@
 #   ./Scripts/submit_boltz.sh <experiment>
 #   ./Scripts/submit_boltz.sh <experiment> --no_affinity
 #   ./Scripts/submit_boltz.sh <experiment> --override --time 7-00:00:00
+#   ./Scripts/submit_boltz.sh <experiment> --use_potentials
 #
 # Options:
-#   --no_affinity   skip the affinity prediction (structure only)
-#   --override      redo predictions that already have output (Boltz skips them by default)
-#   --time          Slurm time limit (default below)
+#   --no_affinity     skip the affinity prediction (structure only)
+#   --override        redo predictions that already have output (Boltz skips them by default)
+#   --time            Slurm time limit (default below)
+#   --diffusion_samples N
+#                     poses generated per job (default 1). collect_results.py only
+#                     reads model_0, so extra poses appear in outputs/ but not in
+#                     results.csv - useful for asking how stable a prediction is.
+#   --use_potentials  steer the diffusion with Boltz's physical potentials, which
+#                     include a restraint holding each ligand stereocentre to the
+#                     configuration given in the SMILES. Off by default, in Boltz
+#                     and here; it also makes sampling about 3x slower.
+#                     See run_pipeline.sh step 5.
 
 set -e            # stop as soon as any command fails
 set -u            # stop if an undefined variable is used
@@ -47,12 +57,16 @@ shift                 # drop the experiment name, leaving only the options
 
 NO_AFFINITY="no"      # these are passed on to run_pipeline.sh
 OVERRIDE="no"
+POTENTIALS="no"
+DIFFUSION_SAMPLES="1"
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --no_affinity) NO_AFFINITY="yes"; shift ;;
-        --override)    OVERRIDE="yes"; shift ;;
-        --time)        TIME_LIMIT="$2"; shift 2 ;;
+        --no_affinity)       NO_AFFINITY="yes"; shift ;;
+        --override)          OVERRIDE="yes"; shift ;;
+        --use_potentials)    POTENTIALS="yes"; shift ;;
+        --diffusion_samples) DIFFUSION_SAMPLES="$2"; shift 2 ;;
+        --time)              TIME_LIMIT="$2"; shift 2 ;;
         *) echo "ERROR: unknown option '$1'"; exit 1 ;;
     esac
 done
@@ -108,7 +122,7 @@ sbatch \
     --mem="$MEMORY" \
     --gres=gpu:1 \
     $MAIL_OPTIONS \
-    --export=ALL,EXPERIMENT="$EXPERIMENT",PROJECT_DIR="$PROJECT_DIR",NO_AFFINITY="$NO_AFFINITY",OVERRIDE="$OVERRIDE" \
+    --export=ALL,EXPERIMENT="$EXPERIMENT",PROJECT_DIR="$PROJECT_DIR",NO_AFFINITY="$NO_AFFINITY",OVERRIDE="$OVERRIDE",POTENTIALS="$POTENTIALS",DIFFUSION_SAMPLES="$DIFFUSION_SAMPLES" \
     "$SCRIPT_DIR/run_pipeline.sh"
 
 echo ""

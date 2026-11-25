@@ -7,8 +7,14 @@ Reads:  experiments/<experiment>/inputs/proteins.csv   (ID, SEQUENCE, COFACTORS[
         experiments/<experiment>/inputs/ligands.csv    (ID, SMILES[, WARHEAD])
         experiments/<experiment>/inputs/covalent_prepared.csv   (if this is a covalent experiment)
 Writes: experiments/<experiment>/jobs/<proteinID>__<ligandID>.yaml
+        experiments/<experiment>/jobs/<proteinID>.yaml          (apo experiment, see below)
 
 If covalent_prepared.csv is present, every job gets a bond constraint joining that atom to the protein's COVALENT_SITE. 
+
+An experiment with no ligands - either a ligands.csv with its header and no rows, or
+no ligands.csv at all - is an apo experiment: one job per protein, holding only the
+protein chains and any cofactors. There is no ligand chain, so there is no affinity
+prediction and no covalent bond constraint.
 
 Example:
     python Scripts/make_jobs.py --experiment <experiment>
@@ -54,15 +60,31 @@ if not experiment_dir.exists():
 # encoding="utf-8-sig" removes the invisible marker some text editors put at the start of a file.
 # dtype=str and keep_default_na=False keep every cell as text, with empty cells as "" (not NaN).
 proteins = pd.read_csv(inputs_dir / "proteins.csv", encoding="utf-8-sig", dtype=str, keep_default_na=False)
-ligands = pd.read_csv(inputs_dir / "ligands.csv", encoding="utf-8-sig", dtype=str, keep_default_na=False)
+
+# An apo experiment has no ligands at all, written either as a ligands.csv with its
+# header and no rows, or as no ligands.csv at all. Both are read as an empty table.
+ligands_file = inputs_dir / "ligands.csv"
+if ligands_file.exists():
+    ligands = pd.read_csv(ligands_file, encoding="utf-8-sig", dtype=str, keep_default_na=False)
+else:
+    ligands = pd.DataFrame({"ID": pd.Series(dtype=str), "SMILES": pd.Series(dtype=str)})
 
 # Remove stray spaces around column names and values
 proteins.columns = proteins.columns.str.strip()
 ligands.columns = ligands.columns.str.strip()
 proteins = proteins.apply(lambda column: column.str.strip())
-ligands = ligands.apply(lambda column: column.str.strip())
+if len(ligands) > 0:
+    ligands = ligands.apply(lambda column: column.str.strip())
 
 print(f"Read {len(proteins)} proteins and {len(ligands)} ligands")
+
+# No ligands means an apo experiment: predict each protein on its own.
+apo = len(ligands) == 0
+if apo:
+    if ligands_file.exists():
+        print("ligands.csv has no rows: apo experiment, one job per protein.")
+    else:
+        print("No ligands.csv: apo experiment, one job per protein.")
 
 # If prepare_covalents.py has run and found warheads, it leaves this file behind.
 # Its presence is what makes this a covalent experiment.
@@ -144,6 +166,13 @@ if covalent:
 if problems:
     sys.exit("ERROR: please fix these problems in the input files:\n  " + "\n  ".join(problems))
 
+# 4f. An apo job has no ligand to attach, so a COVALENT_SITE cannot be used. This is
+# worth saying out loud rather than dropping silently, in case the ligands were meant
+# to be there and the file was left empty by accident.
+sites_ignored = 0
+if apo and "COVALENT_SITE" in proteins.columns:
+    sites_ignored = sum(1 for _, row in proteins.iterrows() if row["COVALENT_SITE"] != "")
+
 print("Input checks passed")
 
 
@@ -162,6 +191,7 @@ for old_file in jobs_dir.glob("*.yaml"):
 # ---------------------------------------------------------------------------
 chain_letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 missing_msas = set()
+n_jobs = 0
 
 for _, protein in proteins.iterrows():
 
@@ -185,7 +215,10 @@ for _, protein in proteins.iterrows():
         site_chain = chain_part.strip().upper()
         site_position = int(residue_part.strip()[1:])   # drop the residue letter
 
-    for _, ligand in ligands.iterrows():
+    # An apo protein still gets one job; its single "ligand" is None.
+    ligand_rows = [None] if apo else [row for _, row in ligands.iterrows()]
+
+    for ligand in ligand_rows:
 
         sequences = []      # the list of chains that goes into the YAML
         letter_index = 0    # which chain letter to use next
@@ -213,15 +246,18 @@ for _, protein in proteins.iterrows():
 
         # The screened ligand goes last. In a covalent experiment it goes in as its
         # bound (open-valence) form, which is what the bond constraint attaches to.
-        ligand_letter = chain_letters[letter_index]
-        if covalent:
-            ligand_smiles = prepared_by_id[ligand["ID"]]["BOUND_SMILES"]
-        else:
-            ligand_smiles = ligand["SMILES"]
-        sequences.append({"ligand": {
-            "id": ligand_letter,
-            "smiles": ligand_smiles,
-        }})
+        # An apo job stops here, with only the protein chains and any cofactors.
+        ligand_letter = None
+        if not apo:
+            ligand_letter = chain_letters[letter_index]
+            if covalent:
+                ligand_smiles = prepared_by_id[ligand["ID"]]["BOUND_SMILES"]
+            else:
+                ligand_smiles = ligand["SMILES"]
+            sequences.append({"ligand": {
+                "id": ligand_letter,
+                "smiles": ligand_smiles,
+            }})
 
         job = {"version": 1, "sequences": sequences}
 
@@ -234,23 +270,32 @@ for _, protein in proteins.iterrows():
                 "atom2": [ligand_letter, 1, prepared_row["ATTACHMENT_ATOM"]],
             }}]
 
-        if not args.no_affinity:
+        # Affinity is a property of a binder, so an apo job never has one.
+        if not args.no_affinity and not apo:
             job["properties"] = [{"affinity": {"binder": ligand_letter}}]
 
         # width=100000 stops long sequences being split across lines
-        job_file = jobs_dir / f"{protein['ID']}__{ligand['ID']}.yaml"
+        if apo:
+            job_file = jobs_dir / f"{protein['ID']}.yaml"
+        else:
+            job_file = jobs_dir / f"{protein['ID']}__{ligand['ID']}.yaml"
         with open(job_file, "w") as f:
             yaml.safe_dump(job, f, sort_keys=False, width=100000)
+        n_jobs += 1
 
 
 # ---------------------------------------------------------------------------
 # 7. Report
 # ---------------------------------------------------------------------------
-n_jobs = len(proteins) * len(ligands)
 print(f"Wrote {n_jobs} job files to {jobs_dir}")
 if covalent:
     print("These are covalent jobs: each one bonds the ligand to its protein's COVALENT_SITE")
-if args.no_affinity:
+if apo:
+    print("These are apo jobs: protein chains and cofactors only, with no affinity prediction")
+    if sites_ignored:
+        print(f"Note: {sites_ignored} protein(s) have a COVALENT_SITE, which an apo job cannot use. "
+              "It is ignored.")
+elif args.no_affinity:
     print("Affinity prediction is OFF for these jobs")
 
 if missing_msas:
