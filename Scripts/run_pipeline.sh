@@ -188,6 +188,25 @@ python "$PROJECT_DIR/Scripts/make_jobs.py" --experiment "$EXPERIMENT" $AFFINITY_
 # experiment whose ligands have a stereocentre. See CLAUDE.md.
 echo ""
 echo "--- Step 5: running the predictions ---"
+
+# Boltz turns the YAMLs into processed inputs the first time an experiment runs
+# (outputs/boltz_results_jobs/processed/) and reuses that folder ever after. The
+# constraint arrays live there, and they are built at PROCESSING time, not at
+# prediction time. --override only redoes the predictions, so on its own it
+# resamples whatever constraints the previous Boltz version wrote.
+#
+# Measured 2026-11-25: 003 rerun on 2.2.1 with --override --use_potentials reused
+# constraints processed under 2.2.0 and returned an inverted ligand, while the log
+# header said 2.2.1 and potentials on. Deleting processed/ first took the file from
+# 12 to 13 chiral constraints (the 13th is the ligand's own centre; the other 12 are
+# ATP's) and the configuration came through. So --override deletes it here.
+PROCESSED_DIR="$EXPERIMENT_DIR/outputs/boltz_results_jobs/processed"
+if [ "$OVERRIDE" = "yes" ] && [ -d "$PROCESSED_DIR" ]; then
+    echo "  --override: deleting processed/ so the YAMLs are parsed again"
+    echo "              ($PROCESSED_DIR)"
+    rm -rf "$PROCESSED_DIR"
+fi
+
 boltz predict "$EXPERIMENT_DIR/jobs" \
     --out_dir "$EXPERIMENT_DIR/outputs" \
     --cache "$PROJECT_DIR/cache_weights" \
