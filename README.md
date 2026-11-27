@@ -102,12 +102,31 @@ Then, log in to the cluster, navigate to the project directory, and run:
 
 Options: `--no_affinity` (structure only), `--use_potentials` (needed to keep a
 ligand's stereochemistry - see the note below; costs about 2.2x the sampling time),
-`--diffusion_samples N` (poses per job), `--override` (redo pairs that already have
+`--diffusion_samples N` (poses per job), `--n_seeds N` (repeat the whole prediction
+step under N seeds - see below), `--override` (redo pairs that already have
 output), `--time 1-00:00:00` (Slurm time limit).
 
 The Slurm partition, resources and notification address are set at the top of
 `Scripts/submit_boltz.sh` and will need changing for different clusters. Scripts may
 need `chmod +x Scripts/*.sh` once to run.
+
+### Repeat runs under different seeds
+
+`--n_seeds N` runs the prediction step N times, with `--seed 1` to `--seed N`,
+writing `outputs/seed_1/` to `outputs/seed_N/`. `results.csv` then gains a `SEED`
+column and holds one row per pair per seed. It costs N times the sampling time.
+The default is a single run with no seed, which is what Boltz does on its own.
+
+Boltz passes no seed by default, so a single run is not reproducible, and there
+is no way to tell a difference between two inputs from the variation between two
+runs of the same input. Comparing predictions is the usual reason to want this.
+
+This is not the same as `--diffusion_samples N`. Each job is featurised once per
+run, so diffusion samples within one run share that featurisation and differ only
+in the diffusion noise; a seed also changes the random rotation applied to the
+reference conformers before they reach the model. The spread across seeds is
+therefore the wider of the two. Neither is a substitute for comparing against an
+experimental structure.
 
 ### Experiments in subfolders
 

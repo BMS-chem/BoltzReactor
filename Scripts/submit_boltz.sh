@@ -20,6 +20,9 @@
 #                     poses generated per job (default 1). collect_results.py only
 #                     reads model_0, so extra poses appear in outputs/ but not in
 #                     results.csv - useful for asking how stable a prediction is.
+#   --n_seeds N       run the prediction step N times, with --seed 1 .. --seed N,
+#                     into outputs/seed_1/ .. outputs/seed_N/. Default = 0 (a single run with no seed)
+                    
 #   --use_potentials  steer the diffusion with Boltz's physical potentials, which
 #                     include a restraint holding each ligand stereocentre to the
 #                     configuration given in the SMILES. Off by default, in Boltz
@@ -73,6 +76,7 @@ NO_AFFINITY="no"      # these are passed on to run_pipeline.sh
 OVERRIDE="no"
 POTENTIALS="no"
 DIFFUSION_SAMPLES="1"
+N_SEEDS="0"
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -80,10 +84,23 @@ while [ $# -gt 0 ]; do
         --override)          OVERRIDE="yes"; shift ;;
         --use_potentials)    POTENTIALS="yes"; shift ;;
         --diffusion_samples) DIFFUSION_SAMPLES="$2"; shift 2 ;;
+        --n_seeds)           N_SEEDS="$2"; shift 2 ;;
         --time)              TIME_LIMIT="$2"; shift 2 ;;
         *) echo "ERROR: unknown option '$1'"; exit 1 ;;
     esac
 done
+
+# --n_seeds reaches run_pipeline.sh as a number it compares with -le, so a
+# non-number would fail there, inside a queued job, hours later. Check it here.
+case "$N_SEEDS" in
+    ''|*[!0-9]*) echo "ERROR: --n_seeds needs a whole number, not '$N_SEEDS'"; exit 1 ;;
+esac
+case "$DIFFUSION_SAMPLES" in
+    ''|*[!0-9]*) echo "ERROR: --diffusion_samples needs a whole number, not '$DIFFUSION_SAMPLES'"; exit 1 ;;
+esac
+if [ "$DIFFUSION_SAMPLES" -lt 1 ]; then
+    echo "ERROR: --diffusion_samples must be at least 1"; exit 1
+fi
 
 
 # ---------------------------------------------------------------------------
@@ -141,7 +158,7 @@ sbatch \
     --mem="$MEMORY" \
     --gres=gpu:1 \
     $MAIL_OPTIONS \
-    --export=ALL,EXPERIMENT="$EXPERIMENT",PROJECT_DIR="$PROJECT_DIR",NO_AFFINITY="$NO_AFFINITY",OVERRIDE="$OVERRIDE",POTENTIALS="$POTENTIALS",DIFFUSION_SAMPLES="$DIFFUSION_SAMPLES" \
+    --export=ALL,EXPERIMENT="$EXPERIMENT",PROJECT_DIR="$PROJECT_DIR",NO_AFFINITY="$NO_AFFINITY",OVERRIDE="$OVERRIDE",POTENTIALS="$POTENTIALS",DIFFUSION_SAMPLES="$DIFFUSION_SAMPLES",N_SEEDS="$N_SEEDS" \
     "$SCRIPT_DIR/run_pipeline.sh"
 
 echo ""

@@ -27,6 +27,13 @@ set -u            # stop if an undefined variable is used
 # model_0, so extra samples land in outputs/ but not in results.csv.
 DIFFUSION_SAMPLES="${DIFFUSION_SAMPLES:-1}"
 
+# How many seeds to run. 0 (the default) means one run with no --seed at all.
+# Any other number N runs the whole prediction step N times, with
+# --seed 1 .. --seed N, into outputs/seed_1/ .. outputs/seed_N/.
+# Seeds are not the same thing as diffusion samples, and do a better job of
+# providing a noise floor for comparisons across runs.
+N_SEEDS="${N_SEEDS:-0}"
+
 # The NEMO module to load. 2.2.1 is the first build that encourages preservation of
 # a SMILES ligand's stereochemistry (add --use_potentials)
 BOLTZ_MODULE="boltz/2.2.1"
@@ -56,6 +63,11 @@ echo "Affinity:    $( [ "$NO_AFFINITY" = "yes" ] && echo OFF || echo ON )"
 echo "Override:    $OVERRIDE"
 echo "Potentials:  $POTENTIALS"
 echo "Samples:     $DIFFUSION_SAMPLES per job"
+if [ "$N_SEEDS" -eq 0 ]; then
+    echo "Seeds:       none (unseeded single run)"
+else
+    echo "Seeds:       $N_SEEDS (--seed 1 .. --seed $N_SEEDS)"
+fi
 echo "Boltz:       $BOLTZ_MODULE"
 echo "Started:     $(date)"
 echo "=========================================="
@@ -169,25 +181,49 @@ python "$PROJECT_DIR/Scripts/make_jobs.py" --experiment "$EXPERIMENT" $AFFINITY_
 echo ""
 echo "--- Step 5: running the predictions ---"
 
-# Boltz turns the YAMLs into processed inputs the first time an experiment runs
-# (outputs/boltz_results_jobs/processed/) and reuses that folder ever after. 
-# --override deletes the processed folder so that predictions are set up from
-# scratch and re-run.
-PROCESSED_DIR="$EXPERIMENT_DIR/outputs/boltz_results_jobs/processed"
-if [ "$OVERRIDE" = "yes" ] && [ -d "$PROCESSED_DIR" ]; then
-    echo "  --override: deleting processed/ so the YAMLs are parsed again"
-    echo "              ($PROCESSED_DIR)"
-    rm -rf "$PROCESSED_DIR"
-fi
+# One prediction run. $1 is the folder to write into, $2 the --seed flag (or an
+# empty string for an unseeded run). Each seed gets its own out_dir and so its
+# own processed/ folder; they are deliberately not shared, because the constraint
+# arrays are built at processing time and a shared folder is exactly how a stale
+# parse survives a rerun.
+run_predictions () {
+    OUT_DIR="$1"
+    SEED_FLAG="$2"
 
-boltz predict "$EXPERIMENT_DIR/jobs" \
-    --out_dir "$EXPERIMENT_DIR/outputs" \
-    --cache "$PROJECT_DIR/cache_weights" \
-    --diffusion_samples "$DIFFUSION_SAMPLES" \
-    --recycling_steps "$RECYCLING_STEPS" \
-    --sampling_steps "$SAMPLING_STEPS" \
-    --output_format "$OUTPUT_FORMAT" \
-    $OVERRIDE_FLAG $POTENTIALS_FLAG
+    # Boltz turns the YAMLs into processed inputs the first time an experiment runs
+    # (<out_dir>/boltz_results_jobs/processed/) and reuses that folder ever after.
+    # --override deletes the processed folder so that predictions are set up from
+    # scratch and re-run.
+    PROCESSED_DIR="$OUT_DIR/boltz_results_jobs/processed"
+    if [ "$OVERRIDE" = "yes" ] && [ -d "$PROCESSED_DIR" ]; then
+        echo "  --override: deleting processed/ so the YAMLs are parsed again"
+        echo "              ($PROCESSED_DIR)"
+        rm -rf "$PROCESSED_DIR"
+    fi
+
+    mkdir -p "$OUT_DIR"
+
+    boltz predict "$EXPERIMENT_DIR/jobs" \
+        --out_dir "$OUT_DIR" \
+        --cache "$PROJECT_DIR/cache_weights" \
+        --diffusion_samples "$DIFFUSION_SAMPLES" \
+        --recycling_steps "$RECYCLING_STEPS" \
+        --sampling_steps "$SAMPLING_STEPS" \
+        --output_format "$OUTPUT_FORMAT" \
+        $OVERRIDE_FLAG $POTENTIALS_FLAG $SEED_FLAG
+}
+
+if [ "$N_SEEDS" -eq 0 ]; then
+    run_predictions "$EXPERIMENT_DIR/outputs" ""
+else
+    SEED=1
+    while [ "$SEED" -le "$N_SEEDS" ]; do
+        echo ""
+        echo "  --- seed $SEED of $N_SEEDS ---"
+        run_predictions "$EXPERIMENT_DIR/outputs/seed_$SEED" "--seed $SEED"
+        SEED=$(( SEED + 1 ))
+    done
+fi
 
 
 # ---------------------------------------------------------------------------
