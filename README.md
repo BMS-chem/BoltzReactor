@@ -55,6 +55,9 @@ experiments/<name>/
   results.csv     the summary table from Boltz predictions
 ```
 
+`<name>` may contain `/` to group experiments in a subfolder, e.g.
+`project/experiment`. See "Experiments in subfolders" below.
+
 ## Input format
 
 `inputs/proteins.csv`
@@ -65,6 +68,7 @@ experiments/<name>/
 | `SEQUENCE` | one-letter amino acids; separate chains of a complex with `:` |
 | `COFACTORS` | CCD codes separated by `;` (e.g. `ZN;MG`), or empty |
 | `COVALENT_SITE` | covalent experiments only: where the ligand attaches, as `<chain>:<residue><position>`, e.g. `A:C123` |
+| `MODIFICATIONS` | non-standard residues such as phosphosites, as `<chain>:<residue><position>:<CCD code>` separated by `;`, e.g. `A:S42:SEP;B:Y117:PTR`|
 
 `inputs/ligands.csv`
 
@@ -105,6 +109,20 @@ The Slurm partition, resources and notification address are set at the top of
 `Scripts/submit_boltz.sh` and will need changing for different clusters. Scripts may
 need `chmod +x Scripts/*.sh` once to run.
 
+### Experiments in subfolders
+
+Experiments can be grouped by writing `/` in the name.
+
+```
+python Scripts/new_experiment.py --experiment project/<experiment>
+python Scripts/make_jobs.py --experiment project/<experiment>
+./Scripts/submit_boltz.sh project/<experiment>
+```
+
+This makes `experiments/project/<experiment>/`, also creating `project/` if it isn't there
+already. This has to stay inside `experiments/`. In the Slurm job
+name the `/` becomes `_` (`boltz_project_<experiment>`); paths keep the real name.
+
 ## Covalent ligands
 
 The ligands are given as unreacted SMILES and categorised in the `WARHEAD` column.
@@ -115,7 +133,24 @@ names the atom the way Boltz names SMILES ligand atoms, and writes
 constraint between that atom and the protein's `COVALENT_SITE`, which itself is 
 checked against the sequence.
 
-Experiments can't mix covalent and non-covalent jobs.
+N.B.: Experiments can't mix covalent and non-covalent jobs.
+
+## Modified residues
+
+`MODIFICATIONS` puts a non-standard residue into a protein chain, written as
+`<chain>:<residue><position>:<CCD code>` and separated by `;`. The common
+phosphosites are `SEP` (phospho-Ser), `TPO` (phospho-Thr) and `PTR` (phospho-Tyr).
+
+```
+ID,SEQUENCE,COFACTORS,COVALENT_SITE,MODIFICATIONS
+MyKinase,MKSTY...,,,A:S42:SEP;B:Y117:PTR
+```
+
+Position counts from 1 within that chain. Boltz would
+replace whatever residue is at the position without checking what was there, so
+`make_jobs.py` checks the residue letter against the sequence too before continuing, and checks that the CCD code is being applied to the correct type of residue too.
+
+Boltz applies modifications after the sequence is used for the alignment, so this doesn't affect MSA fetching or caching.
 
 ## Benchmarking against known actives
 

@@ -7,8 +7,13 @@ Makes:  experiments/<experiment>/inputs/proteins.csv   (header row only)
         experiments/<experiment>/inputs/ligands.csv    (header row only)
         experiments/<experiment>/jobs/  outputs/  logs/
 
+The name may contain '/' to group experiments in a subfolder, to any depth. Any
+missing parent folders are made. The same name is then what every other script
+takes, including submit_boltz.sh.
+
 Example:
     python Scripts/new_experiment.py --experiment my_screen
+    python Scripts/new_experiment.py --experiment cdk4/005_apo
 """
 
 import argparse
@@ -25,17 +30,30 @@ args = parser.parse_args()
 
 
 # ---------------------------------------------------------------------------
-# 2. Check the name is usable as a folder name
+# 2. Check the name is usable as a folder path
 # ---------------------------------------------------------------------------
-# The name becomes a folder name and part of the Slurm job name, so spaces and
-# slashes are rejected here rather than causing a confusing error later on.
-name = args.experiment.strip()
+# '/' is allowed so that experiments can be grouped in subfolders. Everything that
+# would cause a confusing error later is rejected here. In particular the filepaths
+# have to stay inside /experiments/.
+
+name = args.experiment.strip().replace("\\", "/")
 
 if name == "":
     sys.exit("ERROR: the experiment name is empty")
-for bad in [" ", "/", "\\"]:
-    if bad in name:
-        sys.exit(f"ERROR: the experiment name must not contain '{bad}': {name}")
+if " " in name:
+    sys.exit(f"ERROR: the experiment name must not contain a space: {name}")
+if name.startswith("/") or (len(name) > 1 and name[1] == ":"):
+    sys.exit(f"ERROR: the experiment name must be relative to experiments/, "
+             f"not an absolute path: {name}")
+if name.endswith("/"):
+    sys.exit(f"ERROR: the experiment name must not end with '/': {name}")
+if "//" in name:
+    sys.exit(f"ERROR: the experiment name has an empty folder in it: {name}")
+if any(part == ".." for part in name.split("/")):
+    sys.exit(f"ERROR: the experiment name must stay inside experiments/, so it "
+             f"cannot contain '..': {name}")
+if any(part == "." for part in name.split("/")):
+    sys.exit(f"ERROR: the experiment name must not contain '.' as a folder: {name}")
 
 
 # ---------------------------------------------------------------------------
@@ -43,8 +61,16 @@ for bad in [" ", "/", "\\"]:
 # ---------------------------------------------------------------------------
 # This script lives in <project>/Scripts/, so the project folder is one level up.
 project_dir = Path(__file__).resolve().parent.parent
-experiment_dir = project_dir / "experiments" / name
+experiments_dir = project_dir / "experiments"
+experiment_dir = experiments_dir / name
 inputs_dir = experiment_dir / "inputs"
+
+# The checks above work on the text of the name. This one works on the path it
+# actually resolves to, which is what finally decides where files get written, and
+# so also covers a symlinked parent that the text checks cannot see.
+if not experiment_dir.resolve().is_relative_to(experiments_dir.resolve()):
+    sys.exit(f"ERROR: '{name}' resolves to {experiment_dir.resolve()}, which is "
+             f"outside {experiments_dir}")
 
 if experiment_dir.exists():
     print(f"Note: {experiment_dir} already exists. Only the missing parts will be made.")
@@ -66,7 +92,7 @@ for folder in ["inputs", "jobs", "outputs", "logs"]:
 # Just the header row. A file that already exists is left untouched, so this
 # cannot wipe out input you have already typed in.
 templates = {
-    "proteins.csv": "ID,SEQUENCE,COFACTORS,COVALENT_SITE\n",
+    "proteins.csv": "ID,SEQUENCE,COFACTORS,COVALENT_SITE,MODIFICATIONS\n",
     "ligands.csv": "ID,SMILES,WARHEAD\n",
 }
 
@@ -86,10 +112,14 @@ for file_name, header in templates.items():
 print(f"\nExperiment folder ready: {experiment_dir}")
 print("\nNext:")
 print(f"  1. Fill in {inputs_dir / 'proteins.csv'}")
-print("     ID,SEQUENCE,COFACTORS,COVALENT_SITE  - one row per protein.")
+print("     ID,SEQUENCE,COFACTORS,COVALENT_SITE,MODIFICATIONS  - one row per protein.")
 print("     COVALENT_SITE may be left empty if this is not a covalent experiment.")
 print("     SEQUENCE separates chains with ':'. COFACTORS holds CCD codes")
 print("     separated by ';' (e.g. ZN;MG) and may be left empty.")
+print("     MODIFICATIONS names non-standard residues such as phosphosites, as")
+print("     <chain>:<residue letter><position>:<CCD code> separated by ';'")
+print("     (e.g. A:S42:SEP;B:Y117:PTR). Position counts from 1 within that chain.")
+print("     SEP/TPO/PTR are phospho-Ser/Thr/Tyr. It may be left empty.")
 print(f"  2. Fill in {inputs_dir / 'ligands.csv'}")
 print("     ID,SMILES,WARHEAD  - one row per ligand.")
 print("     WARHEAD may be left empty if the ligand is not covalent.")

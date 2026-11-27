@@ -7,6 +7,7 @@
 #
 # Usage:
 #   ./Scripts/submit_boltz.sh <experiment>
+#   ./Scripts/submit_boltz.sh cdk4/005_apo          (experiments may sit in subfolders)
 #   ./Scripts/submit_boltz.sh <experiment> --no_affinity
 #   ./Scripts/submit_boltz.sh <experiment> --override --time 7-00:00:00
 #   ./Scripts/submit_boltz.sh <experiment> --use_potentials
@@ -54,6 +55,19 @@ fi
 
 EXPERIMENT="$1"
 shift                 # drop the experiment name, leaving only the options
+
+# The name may contain '/' to group experiments in subfolders. It must still stay
+# inside experiments/ so reject improper filepaths here rather than later.
+# The absolute-path check goes first: wrapping the name in slashes below would
+# otherwise make "/abs" look like an empty folder and report the wrong reason.
+case "$EXPERIMENT" in
+    /*) echo "ERROR: experiment name must be relative to experiments/, not an absolute path: $EXPERIMENT"; exit 1 ;;
+esac
+case "/$EXPERIMENT/" in
+    */../*) echo "ERROR: experiment name must stay inside experiments/, so it cannot contain '..': $EXPERIMENT"; exit 1 ;;
+    */./*)  echo "ERROR: experiment name must not contain '.' as a folder: $EXPERIMENT"; exit 1 ;;
+    *//*)   echo "ERROR: experiment name has an empty folder in it: $EXPERIMENT"; exit 1 ;;
+esac
 
 NO_AFFINITY="no"      # these are passed on to run_pipeline.sh
 OVERRIDE="no"
@@ -112,8 +126,13 @@ if [ -n "$EMAIL" ]; then
     MAIL_OPTIONS="--mail-type=END,FAIL --mail-user=$EMAIL"
 fi
 
+# A subfolder experiment name contains '/', which has no business in a Slurm job
+# name (it is what squeue and sacct show). Only the job name is flattened; every
+# path still uses the real name.
+JOB_NAME="boltz_$( printf '%s' "$EXPERIMENT" | tr '/' '_' )"
+
 sbatch \
-    --job-name="boltz_$EXPERIMENT" \
+    --job-name="$JOB_NAME" \
     --output="$EXPERIMENT_DIR/logs/boltz_%j.out" \
     --error="$EXPERIMENT_DIR/logs/boltz_%j.err" \
     --time="$TIME_LIMIT" \

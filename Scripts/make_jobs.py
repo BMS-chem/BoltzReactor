@@ -3,7 +3,7 @@ make_jobs.py
 
 Makes one Boltz YAML file for every protein x ligand pair in an experiment.
 
-Reads:  experiments/<experiment>/inputs/proteins.csv   (ID, SEQUENCE, COFACTORS[, COVALENT_SITE])
+Reads:  experiments/<experiment>/inputs/proteins.csv   (ID, SEQUENCE, COFACTORS[, COVALENT_SITE][, MODIFICATIONS])
         experiments/<experiment>/inputs/ligands.csv    (ID, SMILES[, WARHEAD])
         experiments/<experiment>/inputs/covalent_prepared.csv   (if this is a covalent experiment)
 Writes: experiments/<experiment>/jobs/<proteinID>__<ligandID>.yaml
@@ -29,6 +29,45 @@ from pathlib import Path
 import pandas as pd
 import yaml
 from rdkit import Chem
+
+
+# ---------------------------------------------------------------------------
+# 0. Defining modified residues
+# ---------------------------------------------------------------------------
+# 
+# MODIFICATIONS optionally names non-standard residues (e.g. phospho PTMs) as a
+# ';'-separated list of <chain>:<residue letter><position>:<CCD code>, for example
+# "A:S42:SEP" or "A:Y117:PTR;B:T5:TPO".
+# Position is counted from 1 within that chain, not across the whole SEQUENCE.
+# 
+# This list is used to parse that modifications have been written correctly before
+# committing to processing the experiment.
+
+MODIFICATION_PARENTS = {
+    "SEP": "S",   # phosphoserine
+    "TPO": "T",   # phosphothreonine
+    "PTR": "Y",   # O-phosphotyrosine
+    "NEP": "H",   # N1-phosphonohistidine
+    "ALY": "K",   # N(6)-acetyllysine
+    "MLZ": "K",   # N-methyl-lysine
+    "MLY": "K",   # N-dimethyl-lysine
+    "M3L": "K",   # N-trimethyllysine
+    "KCX": "K",   # lysine NZ-carboxylic acid
+    "HYP": "P",   # 4-hydroxyproline
+    "CSO": "C",   # S-hydroxycysteine
+    "CSD": "C",   # 3-sulfinoalanine
+    "OCS": "C",   # cysteinesulfonic acid
+    "CME": "C",   # S,S-(2-hydroxyethyl)thiocysteine
+    "HIC": "H",   # 4-methyl-histidine
+    "PCA": "Q",   # pyroglutamic acid
+    "MSE": "M",   # selenomethionine (Boltz maps this back to MET, so it does nothing)
+}
+
+# Boltz's parser rewrites MSE to MET before building the residue, so asking for it
+# produces an ordinary methionine. Worth saying rather than letting it look applied.
+MODIFICATIONS_WITHOUT_EFFECT = {"MSE"}
+
+chain_letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
 
 # ---------------------------------------------------------------------------
@@ -163,12 +202,120 @@ if covalent:
             if row["COVALENT_SITE"] == "":
                 problems.append(f"proteins.csv: '{row['ID']}' has an empty COVALENT_SITE")
 
+# 4f. Read and check the MODIFICATIONS column.
+# Each protein's entry is turned into {chain index: [{"position": int, "ccd": str}, ...]},
+# which is what section 6 puts into the YAML.
+modifications_by_protein = {}
+unknown_codes = set()
+inert_codes = set()
+
+for _, row in proteins.iterrows():
+    protein_id = row["ID"]
+    modifications_by_protein[protein_id] = {}
+
+    if "MODIFICATIONS" not in proteins.columns or row["MODIFICATIONS"] == "":
+        continue
+
+    # A protein whose SEQUENCE is empty or malformed has already been reported by 4c.
+    # Checking positions against it as well would only add confusing extra errors.
+    if row["SEQUENCE"] == "":
+        continue
+
+    chains = [chain.upper() for chain in row["SEQUENCE"].split(":")]
+    seen_positions = set()
+
+    for entry in row["MODIFICATIONS"].split(";"):
+        entry = entry.strip()
+        if entry == "":
+            continue
+
+        parts = entry.split(":")
+        if len(parts) != 3:
+            problems.append(f"proteins.csv: '{protein_id}' MODIFICATIONS entry '{entry}' should be "
+                            "<chain>:<residue letter><position>:<CCD code>, e.g. A:S42:SEP")
+            continue
+
+        chain_letter = parts[0].strip().upper()
+        residue_part = parts[1].strip().upper()
+        ccd_code = parts[2].strip().upper()
+
+        if len(residue_part) < 2 or not residue_part[0].isalpha() or not residue_part[1:].isdigit():
+            problems.append(f"proteins.csv: '{protein_id}' MODIFICATIONS entry '{entry}' should give a "
+                            "residue letter then a position, e.g. A:S42:SEP")
+            continue
+
+        residue_letter = residue_part[0]
+        position = int(residue_part[1:])
+
+        if ccd_code == "" or not ccd_code.isalnum() or len(ccd_code) > 5:
+            problems.append(f"proteins.csv: '{protein_id}' MODIFICATIONS entry '{entry}' has an "
+                            f"unusable CCD code '{ccd_code}'. Expected something like SEP or PTR.")
+            continue
+
+        if chain_letter not in chain_letters[:len(chains)]:
+            problems.append(f"proteins.csv: '{protein_id}' MODIFICATIONS entry '{entry}' names chain "
+                            f"'{chain_letter}', but this protein has {len(chains)} chain(s) "
+                            f"({chain_letters[:len(chains)]})")
+            continue
+
+        chain_index = chain_letters.index(chain_letter)
+        chain_sequence = chains[chain_index]
+
+        if not 1 <= position <= len(chain_sequence):
+            problems.append(f"proteins.csv: '{protein_id}' MODIFICATIONS entry '{entry}' position "
+                            f"{position} is outside chain {chain_letter}, which is "
+                            f"{len(chain_sequence)} residues long")
+            continue
+
+        # Check that the typed residue matches the actual residue in the sequence
+        actual = chain_sequence[position - 1]
+        if actual != residue_letter:
+            problems.append(f"proteins.csv: '{protein_id}' MODIFICATIONS entry '{entry}' says residue "
+                            f"{position} of chain {chain_letter} is '{residue_letter}', but the "
+                            f"sequence has '{actual}' there")
+            continue
+
+        expected_parent = MODIFICATION_PARENTS.get(ccd_code)
+        if expected_parent is None:
+            unknown_codes.add(ccd_code)
+        elif expected_parent != residue_letter:
+            problems.append(f"proteins.csv: '{protein_id}' MODIFICATIONS entry '{entry}' puts "
+                            f"{ccd_code} on a '{residue_letter}', but {ccd_code} is made from "
+                            f"'{expected_parent}'")
+            continue
+
+        if ccd_code in MODIFICATIONS_WITHOUT_EFFECT:
+            inert_codes.add(ccd_code)
+
+        if (chain_letter, position) in seen_positions:
+            problems.append(f"proteins.csv: '{protein_id}' has more than one modification at "
+                            f"{chain_letter}:{position}")
+            continue
+        seen_positions.add((chain_letter, position))
+
+        # A covalent ligand is attached by atom name to the residue at COVALENT_SITE.
+        # Replacing that residue changes which atoms it has, so the bond would be made
+        # to an atom that may no longer exist.
+        if covalent and "COVALENT_SITE" in proteins.columns and row["COVALENT_SITE"] != "":
+            site_text = row["COVALENT_SITE"].strip().upper()
+            if ":" in site_text:
+                site_chain_letter, site_residue_part = site_text.split(":", 1)
+                if (site_chain_letter.strip() == chain_letter
+                        and site_residue_part.strip()[1:].isdigit()
+                        and int(site_residue_part.strip()[1:]) == position):
+                    problems.append(f"proteins.csv: '{protein_id}' modifies {chain_letter}:{position}, "
+                                    f"which is also its COVALENT_SITE. The covalent bond is made to a "
+                                    f"named atom of that residue, so it cannot also be replaced.")
+                    continue
+
+        modifications_by_protein[protein_id].setdefault(chain_index, []).append(
+            {"position": position, "ccd": ccd_code}
+        )
+
 if problems:
     sys.exit("ERROR: please fix these problems in the input files:\n  " + "\n  ".join(problems))
 
-# 4f. An apo job has no ligand to attach, so a COVALENT_SITE cannot be used. This is
-# worth saying out loud rather than dropping silently, in case the ligands were meant
-# to be there and the file was left empty by accident.
+# 4g. An apo job has no ligand to attach, so a COVALENT_SITE cannot be used.
 sites_ignored = 0
 if apo and "COVALENT_SITE" in proteins.columns:
     sites_ignored = sum(1 for _, row in proteins.iterrows() if row["COVALENT_SITE"] != "")
@@ -189,9 +336,9 @@ for old_file in jobs_dir.glob("*.yaml"):
 # ---------------------------------------------------------------------------
 # 6. Write one YAML per protein x ligand pair
 # ---------------------------------------------------------------------------
-chain_letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 missing_msas = set()
 n_jobs = 0
+n_modified_chains = 0
 
 for _, protein in proteins.iterrows():
 
@@ -224,16 +371,28 @@ for _, protein in proteins.iterrows():
         letter_index = 0    # which chain letter to use next
 
         # Protein chains first: A, B, ...
-        for chain in chains:
+        for chain_index, chain in enumerate(chains):
             chain_hash = hashlib.sha256(chain.encode()).hexdigest()[:16]
             msa_path = f"cache_msa/{complex_hash}/{chain_hash}.csv"   # relative to the project folder
             if not (project_dir / msa_path).exists():
                 missing_msas.add(msa_path)
-            sequences.append({"protein": {
+            chain_entry = {
                 "id": chain_letters[letter_index],
                 "sequence": chain,
                 "msa": msa_path,
-            }})
+            }
+
+            # Any modifications for this chain. The MSA is deliberately still the one
+            # for the unmodified sequence: Boltz applies modifications after the
+            # sequence has been used for the alignment, so the two stay consistent.
+            chain_modifications = modifications_by_protein[protein["ID"]].get(chain_index, [])
+            if chain_modifications:
+                chain_entry["modifications"] = sorted(
+                    chain_modifications, key=lambda mod: mod["position"]
+                )
+                n_modified_chains += 1
+
+            sequences.append({"protein": chain_entry})
             letter_index += 1
 
         # Then the cofactors, given as CCD codes (e.g. ZN)
@@ -288,6 +447,15 @@ for _, protein in proteins.iterrows():
 # 7. Report
 # ---------------------------------------------------------------------------
 print(f"Wrote {n_jobs} job files to {jobs_dir}")
+if n_modified_chains:
+    print(f"{n_modified_chains} protein chain(s) across these jobs carry modified residues")
+if unknown_codes:
+    print(f"Note: {', '.join(sorted(unknown_codes))} are not in this script's table of known "
+          "modifications, so the residue they are made from was not checked. Boltz will fail "
+          "the job with 'CCD component ... not found!' if a code does not exist.")
+if inert_codes:
+    print(f"Note: {', '.join(sorted(inert_codes))} is rewritten to the standard residue by "
+          "Boltz's parser, so it has no effect on the prediction.")
 if covalent:
     print("These are covalent jobs: each one bonds the ligand to its protein's COVALENT_SITE")
 if apo:
